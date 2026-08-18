@@ -1,0 +1,64 @@
+name: CI/CD Deploy Go Backoffice API
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build & Deploy Backoffice Go API to VPS (server-goaccess)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Verify Go build
+        run: |
+          go mod tidy
+          go build -v .
+
+      - name: Deploy via SSH to server-goaccess
+        id: ssh_deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 149.50.139.2
+          port: 5838
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /opt/ticketing
+            docker compose restart go-backoffice 2>/dev/null || true
+
+      - name: Notify Telegram on Success
+        if: success()
+        run: |
+          BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          RECIPIENTS=("5627436008" "6319350799")
+          MESSAGE="✅ *DEPLOY EXITOSO — Backoffice API Go*%0A*Repo:* OvniCore-SA/api_go_ticketing_backoffice%0A*Commit:* \`${{ github.sha }}\"%0A*Branch:* main%0A*Servidor:* server-goaccess (149.50.139.2)%0A*Puerto:* 8089 (Go Backoffice API)"
+          
+          for CHAT_ID in "${RECIPIENTS[@]}"; do
+            curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              -d chat_id="${CHAT_ID}" \
+              -d parse_mode="Markdown" \
+              -d text="${MESSAGE}"
+          done
+
+      - name: Notify Telegram on Failure
+        if: failure()
+        run: |
+          BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          RECIPIENTS=("5627436008" "6319350799")
+          MESSAGE="❌ *DESPLIEGUE FALLIDO — Backoffice API Go*%0A*Repo:* OvniCore-SA/api_go_ticketing_backoffice%0A*Commit:* \`${{ github.sha }}\"%0A*Branch:* main%0A*Estado:* El proceso de deploy falló."
+          
+          for CHAT_ID in "${RECIPIENTS[@]}"; do
+            curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              -d chat_id="${CHAT_ID}" \
+              -d parse_mode="Markdown" \
+              -d text="${MESSAGE}"
+          done
