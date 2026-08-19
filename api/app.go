@@ -23,18 +23,23 @@ type CreateTenantRequest struct {
 	Modules     map[string]bool `json:"modules"`
 }
 
-// Provisión inmediata de SSL vía script o certbot directo
+// Provisión inmediata de SSL vía Docker Exec en el Host
 func provisionSSL(domain string) error {
-	log.Printf("⚡ [SSL AUTOMÁTICO] Ejecutando Certbot y Nginx para: %s", domain)
+	log.Printf("⚡ [SSL AUTOMÁTICO] Ejecutando Certbot y Nginx en el Host para: %s", domain)
 	
-	// Intentar ejecutar mediante sh si bash no está en el PATH del contenedor
-	cmd := exec.Command("/bin/sh", "/usr/local/bin/provision-domain", domain)
+	// Ejecutar el script directamente en el Host Linux usando nsenter o docker.sock
+	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-n", "-i", "/usr/local/bin/provision-domain", domain)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("❌ Error provisionando SSL para %s: %v. Log: %s", domain, err, string(output))
-		return err
+		// Fallback directo vía ejecutor del host
+		cmdFallback := exec.Command("/bin/sh", "-c", "nsenter -t 1 -m -u -n -i /usr/local/bin/provision-domain "+domain)
+		outputFallback, errFallback := cmdFallback.CombinedOutput()
+		if errFallback != nil {
+			log.Printf("❌ Error provisionando SSL para %s: %v. Output: %s", domain, errFallback, string(outputFallback))
+			return errFallback
+		}
 	}
-	log.Printf("✅ SSL e infraestructura Nginx listos para %s", domain)
+	log.Printf("✅ SSL e infraestructura Nginx listos para %s. Output: %s", domain, string(output))
 	return nil
 }
 
@@ -69,7 +74,7 @@ func StartApp() error {
 		}
 		client := &http.Client{
 			Transport: tr,
-			Timeout:   2 * time.Second,
+			Timeout:   3 * time.Second,
 		}
 
 		resp, err := client.Get("https://" + domain)
@@ -106,7 +111,7 @@ func StartApp() error {
 	api.Post("/tenants", func(c *fiber.Ctx) error {
 		var req CreateTenantRequest
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+			return c.Status(400).JSON(fiber.Map{"error":="Invalid request body"})
 		}
 
 		log.Printf("📥 Registrando nuevo Tenant: %s (%s) con dominio: %s", req.Name, req.Slug, req.Domain)
