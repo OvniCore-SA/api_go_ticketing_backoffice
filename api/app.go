@@ -23,10 +23,12 @@ type CreateTenantRequest struct {
 	Modules     map[string]bool `json:"modules"`
 }
 
-// Provisión inmediata y sincrónica de SSL en el servidor
+// Provisión inmediata de SSL vía script o certbot directo
 func provisionSSL(domain string) error {
 	log.Printf("⚡ [SSL AUTOMÁTICO] Ejecutando Certbot y Nginx para: %s", domain)
-	cmd := exec.Command("/usr/local/bin/provision-domain", domain)
+	
+	// Intentar ejecutar mediante sh si bash no está en el PATH del contenedor
+	cmd := exec.Command("/bin/sh", "/usr/local/bin/provision-domain", domain)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("❌ Error provisionando SSL para %s: %v. Log: %s", domain, err, string(output))
@@ -54,7 +56,6 @@ func StartApp() error {
 
 	api := app.Group("/api/v1/backoffice")
 
-	// Endpoint de verificación de SSL en tiempo real que SI NO TIENE SSL, SE LO EMITE E INSTALA AL VUELO
 	api.Get("/verify-ssl", func(c *fiber.Ctx) error {
 		domain := c.Query("domain")
 		if domain == "" {
@@ -63,9 +64,8 @@ func StartApp() error {
 
 		log.Printf("🔍 Verificando estado HTTPS para: %s", domain)
 
-		// 1. Probar si el SSL ya está emitiendo HTTPS 200 OK
 		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: false}, // Validación estricta de SSL
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
 		}
 		client := &http.Client{
 			Transport: tr,
@@ -82,10 +82,8 @@ func StartApp() error {
 			})
 		}
 
-		// 2. SI NO TIENE SSL VÁLIDO -> EL CÓDIGO DISPARA LA PROVISIÓN DE CERTBOT E INSTALA SSL DE UNA
 		log.Printf("⚠️ %s no tiene SSL activo o falló validación. Disparando emisión automática Certbot...", domain)
 		if errProv := provisionSSL(domain); errProv == nil {
-			// Re-probar inmediatamente tras la emisión
 			respRetry, errRetry := client.Get("https://" + domain)
 			if errRetry == nil && respRetry.StatusCode < 500 {
 				respRetry.Body.Close()
@@ -113,7 +111,6 @@ func StartApp() error {
 
 		log.Printf("📥 Registrando nuevo Tenant: %s (%s) con dominio: %s", req.Name, req.Slug, req.Domain)
 
-		// DISPARO SÍNCRONO E INMEDIATO DE SSL AL CREAR EL TENANT
 		if req.Domain != "" && req.DomainType == "custom" {
 			provisionSSL(req.Domain)
 		}

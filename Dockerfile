@@ -10,6 +10,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server .
 
 FROM alpine:latest
 
+# Instalar bash y certbot dentro del contenedor para ejecuciones directas
+RUN apk add --no-cache bash certbot certbot-nginx nginx curl
+
 WORKDIR /app
 COPY --from=builder /app/server .
 
