@@ -23,15 +23,12 @@ type CreateTenantRequest struct {
 	Modules     map[string]bool `json:"modules"`
 }
 
-// Provisión inmediata de SSL vía Docker Exec en el Host
 func provisionSSL(domain string) error {
 	log.Printf("⚡ [SSL AUTOMÁTICO] Ejecutando Certbot y Nginx en el Host para: %s", domain)
 	
-	// Ejecutar el script directamente en el Host Linux usando nsenter o docker.sock
 	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-n", "-i", "/usr/local/bin/provision-domain", domain)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// Fallback directo vía ejecutor del host
 		cmdFallback := exec.Command("/bin/sh", "-c", "nsenter -t 1 -m -u -n -i /usr/local/bin/provision-domain "+domain)
 		outputFallback, errFallback := cmdFallback.CombinedOutput()
 		if errFallback != nil {
@@ -111,7 +108,7 @@ func StartApp() error {
 	api.Post("/tenants", func(c *fiber.Ctx) error {
 		var req CreateTenantRequest
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error":="Invalid request body"})
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
 		log.Printf("📥 Registrando nuevo Tenant: %s (%s) con dominio: %s", req.Name, req.Slug, req.Domain)
