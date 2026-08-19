@@ -23,6 +23,19 @@ type CreateTenantRequest struct {
 	Modules     map[string]bool `json:"modules"`
 }
 
+// Provisión inmediata y sincrónica de SSL en el servidor
+func provisionSSL(domain string) error {
+	log.Printf("⚡ [SSL AUTOMÁTICO] Ejecutando Certbot y Nginx para: %s", domain)
+	cmd := exec.Command("/usr/local/bin/provision-domain", domain)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("❌ Error provisionando SSL para %s: %v. Log: %s", domain, err, string(output))
+		return err
+	}
+	log.Printf("✅ SSL e infraestructura Nginx listos para %s", domain)
+	return nil
+}
+
 func StartApp() error {
 	app := fiber.New(fiber.Config{
 		AppName: "Ticketing SaaS Platform - Backoffice & Management API",
@@ -39,25 +52,24 @@ func StartApp() error {
 		})
 	})
 
-	// Handlers de Backoffice: Gestión de Tenants, SSL y Provisión Autónomas
 	api := app.Group("/api/v1/backoffice")
 
-	// Endpoint de verificación de SSL en tiempo real para el Frontend
+	// Endpoint de verificación de SSL en tiempo real que SI NO TIENE SSL, SE LO EMITE E INSTALA AL VUELO
 	api.Get("/verify-ssl", func(c *fiber.Ctx) error {
 		domain := c.Query("domain")
 		if domain == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "domain query parameter is required"})
 		}
 
-		log.Printf("🔍 Verificando certificado SSL y respuesta HTTPS en tiempo real para: %s", domain)
+		log.Printf("🔍 Verificando estado HTTPS para: %s", domain)
 
-		// Test HTTPS real con timeout de 3s
+		// 1. Probar si el SSL ya está emitiendo HTTPS 200 OK
 		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: false}, // Validación estricta de SSL
 		}
 		client := &http.Client{
 			Transport: tr,
-			Timeout:   3 * time.Second,
+			Timeout:   2 * time.Second,
 		}
 
 		resp, err := client.Get("https://" + domain)
@@ -70,10 +82,26 @@ func StartApp() error {
 			})
 		}
 
+		// 2. SI NO TIENE SSL VÁLIDO -> EL CÓDIGO DISPARA LA PROVISIÓN DE CERTBOT E INSTALA SSL DE UNA
+		log.Printf("⚠️ %s no tiene SSL activo o falló validación. Disparando emisión automática Certbot...", domain)
+		if errProv := provisionSSL(domain); errProv == nil {
+			// Re-probar inmediatamente tras la emisión
+			respRetry, errRetry := client.Get("https://" + domain)
+			if errRetry == nil && respRetry.StatusCode < 500 {
+				respRetry.Body.Close()
+				return c.JSON(fiber.Map{
+					"domain":     domain,
+					"ssl_active": true,
+					"status":     respRetry.StatusCode,
+					"auto_fixed": true,
+				})
+			}
+		}
+
 		return c.JSON(fiber.Map{
 			"domain":     domain,
 			"ssl_active": false,
-			"error":      "SSL certification or DNS propagation pending",
+			"error":      "DNS propagation pending or provider challenge delayed",
 		})
 	})
 
@@ -85,21 +113,14 @@ func StartApp() error {
 
 		log.Printf("📥 Registrando nuevo Tenant: %s (%s) con dominio: %s", req.Name, req.Slug, req.Domain)
 
-		// DISPARO SÍNCRONO / INMEDIATO DE PROVISIÓN SSL
+		// DISPARO SÍNCRONO E INMEDIATO DE SSL AL CREAR EL TENANT
 		if req.Domain != "" && req.DomainType == "custom" {
-			log.Printf("🚀 Ejecutando provisión síncrona de SSL Certbot para: %s", req.Domain)
-			cmd := exec.Command("/usr/local/bin/provision-domain", req.Domain)
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				log.Printf("⚠️ Error provisionando dominio %s: %v. Output: %s", req.Domain, err, string(output))
-			} else {
-				log.Printf("✅ Dominio y SSL provisionados exitosamente para %s", req.Domain)
-			}
+			provisionSSL(req.Domain)
 		}
 
 		return c.Status(201).JSON(fiber.Map{
 			"status":  "created",
-			"message": "Tenant registrado y provisión de SSL ejecutada",
+			"message": "Tenant registrado y provisión SSL ejecutada de una",
 			"id":      1,
 			"domain":  req.Domain,
 		})
