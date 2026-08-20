@@ -8,24 +8,42 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/api/handlers"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/api/middlewares"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/api/routes"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/internal/database"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/auth"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/commissions"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/design_tokens"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/domains"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/modules"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/page_templates"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/plans"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/producer_component_variants"
+	pcfg "github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/producer_config"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/producer_modules"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/producers"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/public_storefront"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/store"
+	"github.com/OvniCore-SA/api_go_ticketing_backoffice/pkg/domains/templates"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 )
 
 type CreateTenantRequest struct {
-	Name        string          `json:"name"`
-	Slug        string          `json:"slug"`
-	Domain      string          `json:"domain"`
-	DomainType  string          `json:"domainType"`
-	AdminEmail  string          `json:"adminEmail"`
-	Plan        string          `json:"plan"`
-	Modules     map[string]bool `json:"modules"`
+	Name       string          `json:"name"`
+	Slug       string          `json:"slug"`
+	Domain     string          `json:"domain"`
+	DomainType string          `json:"domainType"`
+	AdminEmail string          `json:"adminEmail"`
+	Plan       string          `json:"plan"`
+	Modules    map[string]bool `json:"modules"`
 }
 
 func provisionSSL(domain string) error {
 	log.Printf("⚡ [SSL AUTOMÁTICO] Ejecutando Certbot y Nginx en el Host para: %s", domain)
-	
+
 	cmd := exec.Command("nsenter", "-t", "1", "-m", "-u", "-n", "-i", "/usr/local/bin/provision-domain", domain)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -56,9 +74,98 @@ func StartApp() error {
 		})
 	})
 
-	api := app.Group("/api/v1/backoffice")
+	// Inicializar la conexión a PostgreSQL DB si hay configuración disponible
+	dbHost := os.Getenv("DB_HOST")
+	if dbHost != "" {
+		db := database.NewPostgresClient()
 
-	api.Get("/verify-ssl", func(c *fiber.Ctx) error {
+		env := os.Getenv("APP_ENV")
+		if env == "development" || env == "dev" || env == "" {
+			_ = db.AutoMigrateAll()
+			_ = db.SeedBaseline()
+		}
+
+		// Repositorios
+		producersRepo := producers.NewProducersRepository(db)
+		domainsRepo := domains.NewDomainsRepository(db)
+		producerModulesRepo := producer_modules.NewProducerModulesRepository(db)
+		modulesRepo := modules.NewModulesRepository(db)
+		variantsRepo := producer_component_variants.NewProducerComponentVariantsRepository(db)
+		tokensRepo := design_tokens.NewDesignTokensRepository(db)
+		pagesRepo := page_templates.NewPageTemplatesRepository(db)
+		plansRepo := plans.NewPlansRepository(db)
+		templatesRepo := templates.NewTemplatesRepository(db)
+		commissionsRepo := commissions.NewCommissionsRepository(db)
+		authRepo := auth.NewAuthRepository(db.DB)
+
+		// Resolver de configuración efectiva de Producer
+		resolver := pcfg.NewResolver(
+			producersRepo,
+			pcfg.NewStatusLayer(),
+			pcfg.NewTemplateDefaultsLayer(templatesRepo),
+			pcfg.NewPlanCapLayer(),
+			pcfg.NewProducerOverridesLayer(producerModulesRepo, variantsRepo, tokensRepo, pagesRepo, modulesRepo),
+		)
+
+		// Servicios
+		storeService := store.NewStoreService(producersRepo, domainsRepo, resolver)
+		publicStorefrontService := public_storefront.NewPublicStorefrontService(producersRepo, domainsRepo, resolver)
+		templatesService := templates.NewTemplatesService(templatesRepo)
+		producersService := producers.NewProducersService(producersRepo, plansRepo, templatesService)
+		producerModulesService := producer_modules.NewProducerModulesService(producerModulesRepo, modulesRepo, producersService)
+		producerVariantsService := producer_component_variants.NewProducerComponentVariantsService(variantsRepo, modulesRepo, producersService)
+		designTokensService := design_tokens.NewDesignTokensService(tokensRepo, producersService)
+		pageTemplatesService := page_templates.NewPageTemplatesService(pagesRepo, producersService)
+		domainsService := domains.NewDomainsService(domainsRepo, producersService)
+		commissionsService := commissions.NewCommissionsService(commissionsRepo, producersService)
+		authService := auth.NewAuthService(authRepo)
+		modulesService := modules.NewModulesService(modulesRepo)
+		plansService := plans.NewPlansService(plansRepo)
+
+		// Handlers
+		storeHandler := handlers.NewStoreHandler(storeService)
+		publicStorefrontHandler := handlers.NewPublicStorefrontHandler(publicStorefrontService)
+		producersHandler := handlers.NewProducersHandler(
+			producersService,
+			producerModulesService,
+			producerVariantsService,
+			designTokensService,
+			pageTemplatesService,
+			domainsService,
+			commissionsService,
+		)
+		authHandler := handlers.NewAuthHandler(authService)
+		modulesHandler := handlers.NewModulesHandler(modulesService)
+		plansHandler := handlers.NewPlansHandler(plansService)
+		templatesHandler := handlers.NewTemplatesHandler(templatesService)
+		producerConfigHandler := handlers.NewProducerConfigHandler(resolver)
+
+		// Middlewares
+		mwManager := middlewares.NewMiddlewareManager(authService)
+		authMiddleware := mwManager.ValidateToken()
+
+		// API v1 Routes
+		v1 := app.Group("/api/v1")
+
+		// Endpoints de Store Engine (/api/v1/store/tenant-by-host)
+		routes.SetupStoreRoutes(v1, storeHandler)
+
+		// Endpoints Públicos de Storefront (/api/v1/public/...)
+		routes.SetupPublicStorefrontRoutes(v1, publicStorefrontHandler)
+
+		// Endpoints Autenticados de Backoffice
+		routes.SetupAuthRoutes(v1, authHandler, authMiddleware)
+		routes.SetupProducersRoutes(v1, producersHandler, authMiddleware)
+		routes.SetupModulesRoutes(v1, modulesHandler, authMiddleware)
+		routes.SetupPlansRoutes(v1, plansHandler, authMiddleware)
+		routes.SetupTemplatesRoutes(v1, templatesHandler, authMiddleware)
+		routes.SetupProducerConfigRoutes(v1, producerConfigHandler, authMiddleware)
+	}
+
+	// Legacy / Helper endpoints para backoffice SSL
+	apiLegacy := app.Group("/api/v1/backoffice")
+
+	apiLegacy.Get("/verify-ssl", func(c *fiber.Ctx) error {
 		domain := c.Query("domain")
 		if domain == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "domain query parameter is required"})
@@ -105,7 +212,7 @@ func StartApp() error {
 		})
 	})
 
-	api.Post("/tenants", func(c *fiber.Ctx) error {
+	apiLegacy.Post("/tenants", func(c *fiber.Ctx) error {
 		var req CreateTenantRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
