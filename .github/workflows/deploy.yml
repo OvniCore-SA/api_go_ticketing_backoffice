@@ -41,9 +41,9 @@ jobs:
       - name: Notify Telegram on Success
         if: success()
         run: |
-          BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          BOT_TOKEN="7659845507:AAEknCt4m_OI27PaVNiattd15tubUOiDy8o"
           RECIPIENTS=("5627436008" "6319350799")
-          MESSAGE="✅ *DEPLOY EXITOSO — Backoffice API Go*%0A*Repo:* OvniCore-SA/api_go_ticketing_backoffice%0A*Commit:* \`${{ github.sha }}\"%0A*Branch:* main%0A*Servidor:* server-goaccess (149.50.139.2)%0A*Puerto:* 8089 (Go Backoffice API)"
+          MESSAGE="✅ *DEPLOY EXITOSO — Backoffice API Go*%0A*Repo:* OvniCore-SA/api_go_ticketing_backoffice%0A*Commit:* ${{ github.sha }}%0A*Branch:* main%0A*Servidor:* server-goaccess (149.50.139.2)%0A*Puerto:* 8089 (Go Backoffice API)"
           
           for CHAT_ID in "${RECIPIENTS[@]}"; do
             curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
@@ -55,9 +55,9 @@ jobs:
       - name: Notify Telegram on Failure
         if: failure()
         run: |
-          BOT_TOKEN="${{ secrets.TELEGRAM_BOT_TOKEN }}"
+          BOT_TOKEN="7659845507:AAEknCt4m_OI27PaVNiattd15tubUOiDy8o"
           RECIPIENTS=("5627436008" "6319350799")
-          MESSAGE="❌ *DESPLIEGUE FALLIDO — Backoffice API Go*%0A*Repo:* OvniCore-SA/api_go_ticketing_backoffice%0A*Commit:* \`${{ github.sha }}\"%0A*Branch:* main%0A*Estado:* El proceso de deploy falló."
+          MESSAGE="❌ *DESPLIEGUE FALLIDO — Backoffice API Go*%0A*Repo:* OvniCore-SA/api_go_ticketing_backoffice%0A*Commit:* ${{ github.sha }}%0A*Branch:* main%0A*Estado:* El proceso de deploy falló."
           
           for CHAT_ID in "${RECIPIENTS[@]}"; do
             curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
