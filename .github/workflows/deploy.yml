@@ -32,8 +32,11 @@ jobs:
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /opt/ticketing
-            docker compose restart go-backoffice 2>/dev/null || true
+            cd /opt/ticketing/api_go_ticketing_backoffice
+            git pull origin main
+            docker rm -f ticketing-go-backoffice 2>/dev/null || true
+            docker build -t ticketing-go-backoffice:latest .
+            docker run -d --name ticketing-go-backoffice --restart always --privileged --pid=host -p 8089:8089 -v /usr/local/bin/provision-domain:/usr/local/bin/provision-domain -v /var/run/docker.sock:/var/run/docker.sock -v /etc/nginx:/etc/nginx -v /etc/letsencrypt:/etc/letsencrypt --env-file /opt/ticketing/.env ticketing-go-backoffice:latest
 
       - name: Notify Telegram on Success
         if: success()
